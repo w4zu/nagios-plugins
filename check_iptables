@@ -1,0 +1,23 @@
+#!/bin/bash
+## $VARS CHECK
+IPT=10
+IPT2=0
+## Nagios States
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+
+CHECKIPT=$(/sbin/iptables -L -n | wc -l)
+CHECKIPT2=$(/sbin/iptables -L -n |grep "INPUT"|wc -l)
+if [ $CHECKIPT -le $IPT ]
+then 
+	echo "CRITICAL, problem with rules in iptables"
+    exit $STATE_WARNING
+elif [ $CHECKIPT2 -le $IPT2 ]
+then 
+    echo "CRITICAL, problem with rules INPUT?"
+    exit $STATE_WARNING
+else
+	echo "OK, $CHECKIPT rules in iptables"
+    exit $STATE_OK
+fi

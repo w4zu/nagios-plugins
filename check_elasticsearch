@@ -1,0 +1,96 @@
+#!/bin/bash
+#
+# Nagios plugin to check Elasticsearch Cluster status
+# Use Cluster health API : https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-health.html
+## Nagios States
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+STATE_DEPENDENT=4
+
+## Default values
+ES_HOST=localhost
+ES_PORT=9200
+ES_TO=10
+
+
+usage () {
+    cat << EOF
+Usage : $0 [-h] [options]
+    Options :
+        -H hostname or IP address       Specify Elasticsearch host (Default : $ES_HOST)
+        -p port                         Specify Elasticsearch port (Default : $ES_PORT)
+        -c Connect Timeout (in sec)     Specify connect timeout (DEFAULT : $ES_TO)
+        -h                              Show this message
+EOF
+    exit 0
+}
+
+while getopts "hH:p:c" OPTION
+do
+    case $OPTION in
+        H)
+            ES_HOST=$OPTARG
+        ;;
+        p)
+            ES_PORT=$OPTARG
+        ;;
+        c)
+            ES_TO=$OPTARG
+        ;;
+        h)
+            usage
+        ;;
+        \?)
+            echo -n "Unkown option"
+            usage
+    esac
+done
+
+get_health () {
+    CURL=$(curl -sS --connect-timeout ${ES_TO} -XGET 'http://'${ES_HOST}':'${ES_PORT}'/_cluster/health?pretty=true' 2>&1)
+    if [ $? -ne 0 ]
+    then
+            echo "CRITICAL : Cannot get health status : $CURL"
+            exit $STATE_CRITICAL
+    fi
+    ES_CLUSTER_NAME=$( echo "$CURL" | grep '"cluster_name"' | awk '{print $3}'| cut -d\" -f2 )
+    if [ "$ES_CLUSTER_NAME" == "" ]
+    then
+        echo "UNKNOWN : Cluster name empty"
+        exit $STATE_UNKNOWN
+    fi
+
+    ES_CLUSTER_STATUS=$( echo "$CURL" | grep '"status"' | awk '{print $3}'| cut -d\" -f2 )
+    if [ "$ES_CLUSTER_STATUS" == "" ]
+    then
+        echo "UNKNOWN : Cluster status empty"
+        exit $STATE_UNKNOWN
+    fi
+}
+
+check_status () {
+
+    case $ES_CLUSTER_STATUS in
+    "green")
+            echo "OK : Cluster $ES_CLUSTER_NAME. Status $ES_CLUSTER_STATUS, all shards are allocated"
+            exit $STATE_OK
+            ;;
+    "yellow")
+            echo "CRITICAL : Cluster $ES_CLUSTER_NAME. Status $ES_CLUSTER_STATUS, the primary shard is allocated but replicas are not"
+            exit $STATE_CRITICAL
+            ;;
+    "red")
+            echo "CRITICAL : Cluster $ES_CLUSTER_NAME. Status $ES_CLUSTER_STATUS, the specific shard is not allocated in the cluster"
+            exit $STATE_CRITICAL
+            ;;
+    "*")
+            echo "UNKNOWN : State unknown"
+            exit $STATE_UNKNOWN
+            ;;
+    esac
+}
+
+get_health
+check_status
