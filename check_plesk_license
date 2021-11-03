@@ -1,0 +1,129 @@
+#!/bin/bash
+
+function _NAGIOS_STATES
+{
+    STATE_OK=0
+    STATE_WARNING=1
+    STATE_CRITICAL=2
+    STATE_UNKNOWN=3
+    STATE_DEPENDENT=4
+}
+
+function _USAGE
+{
+cat << EOF
+check_plesk_license - Check Plesk license expiration
+
+    Usage:
+        check_plesk_license [-w 30] [-c 15]
+    
+    Parameters:
+        -w warning threshold (default 30 days)"
+        -c critical threshold (default 15 days)"
+EOF
+}
+
+function _CHECK_PARAMETERS
+{
+    if [ "$(whoami)" != "root" ]
+    then
+        echo "Check must be executed as root"
+        exit $STATE_UNKNOWN
+    fi
+    if [ -z $_WARN_THRESHOLD ]
+    then
+        _WARN_THRESHOLD=30
+    fi
+    if [ -z $_CRIT_THRESHOLD ]
+    then
+        _CRIT_THRESHOLD=15
+    fi
+    if [ $_WARN_THRESHOLD -le $_CRIT_THRESHOLD ]
+    then
+        echo "Warning threshold ($_WARN_THRESHOLD) is less than or equal to critical threshold ($_CRIT_THRESHOLD)"
+        exit $STATE_UNKNOWN
+    fi
+}
+
+function _GET_LICENSE_FILE
+{
+    _LICENSE=($(grep -l 'key-number.*PLSK.' /etc/sw/keys/keys/key* 2>/dev/null))
+    case ${#_LICENSE[@]} in
+    0)
+        echo "Cannot find license file in /etc/sw/keys/keys"
+        exit $STATE_CRITICAL
+        ;;
+    1)
+        _LICENSE_FILE=${_LICENSE[0]}
+        ;;
+    *)
+        echo "Too many key files in /etc/sw/keys/keys"
+        exit $STATE_UNKNOWN
+        ;;
+    esac
+}
+
+function _GET_EXPIRATION
+{
+    _LICENSE_NAME=$(grep -o '<core:key-number core:type="string">.*</core:key-number>' $_LICENSE_FILE | sed 's@\(<core:key-number core:type="string">\|</core:key-number>\)@@g' | sed "s/PLSK./plesk-/g")
+    _EXPIRATION_DATE=$(grep -o '<core:expiration-date core:type="date">.*</core:expiration-date>' $_LICENSE_FILE | sed 's@\(<core:expiration-date core:type="date">\|</core:expiration-date>\)@@g')
+    _DATE_CHECK=$(echo $_EXPIRATION_DATE | sed "s/^\([0-9]\{4\}\)\-\([0-9]\{1,2\}\)\-\([0-9]\{1,2\}\)$/GOOD/g")
+    if [ "$_DATE_CHECK" != "GOOD" ]
+    then
+        echo "Bad expiration date format : $_EXPIRATION_DATE"
+        exit $STATE_UNKNOWN
+    fi
+}
+
+function _CHECK_EXPIRATION
+{
+    _EXPIRATION_DATE_SEC=$(date -d $_EXPIRATION_DATE +%s)
+    _LOCAL_DATE=$(date "+%Y-%m-%d")
+    _LOCAL_DATE_SEC=$(date -d $_LOCAL_DATE +%s)
+    _LICENSE_EXPIRATION_TIME_SEC=$(( $_EXPIRATION_DATE_SEC - $_LOCAL_DATE_SEC ))
+    _LICENSE_EXPIRATION_TIME_DAYS=$(( $_LICENSE_EXPIRATION_TIME_SEC / 86400 ))
+
+
+    if [ $_LICENSE_EXPIRATION_TIME_DAYS -le $_WARN_THRESHOLD ]
+    then
+        if [ $_LICENSE_EXPIRATION_TIME_DAYS -le $_CRIT_THRESHOLD ]
+        then
+            echo "[CRITICAL] License $_LICENSE_NAME will expire in $_LICENSE_EXPIRATION_TIME_DAYS days. Expiration date : $_EXPIRATION_DATE"
+            exit $STATE_CRITICAL
+        fi
+        echo "[WARNING] License $_LICENSE_NAME will expire in $_LICENSE_EXPIRATION_TIME_DAYS days. Expiration date : $_EXPIRATION_DATE"
+        exit $STATE_WARNING
+    else
+        echo "[OK] License $_LICENSE_NAME will expire in $_LICENSE_EXPIRATION_TIME_DAYS days. Expiration date : $_EXPIRATION_DATE"
+        exit $STATE_OK
+    fi
+}
+
+
+### MAIN 
+
+_NAGIOS_STATES
+while getopts "hw:c:" OPTS
+do
+    case $OPTS in
+        w)
+            _WARN_THRESHOLD=$OPTARG
+            ;;
+        c)
+            _CRIT_THRESHOLD=$OPTARG
+            ;;
+        h)
+            _USAGE
+            exit $STATE_UNKNOWN
+            ;;
+        \?)
+            _USAGE
+            exit $STATE_UNKNOWN
+
+    esac
+done
+
+_CHECK_PARAMETERS
+_GET_LICENSE_FILE
+_GET_EXPIRATION
+_CHECK_EXPIRATION
